@@ -1,174 +1,179 @@
 // ==UserScript==
 // @name         Instagram Reels Downloader
-// @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  Adds a download button to Instagram Reels videos.
-// @author       ChatGPT (with user requested modifications)
-// @match        https://www.instagram.com/*
-// @grant        none
-// @license      MIT
+// @namespace    https://github.com/your-username/userscripts
+// @version      1.0
+// @description  Adds a download button to Instagram Reels for direct video download.
+// @author       AI Generated Script
+// @match        https://www.instagram.com/reels/*
+// @grant        GM_download
+// @grant        GM_addStyle
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    // Function to create and add the download button
-    function addDownloadButton(reelContainer) {
-        // Check if a download button already exists in this container
-        if (reelContainer.querySelector('.instagram-reel-download-button')) {
-            return; // Button already added
-        }
+    // --- Configuration ---
+    const BUTTON_ID = 'reel-download-button';
+    const BUTTON_TEXT = 'Download Reel';
+    const BUTTON_DOWNLOADING_TEXT = 'Downloading...';
+    const BUTTON_ERROR_TEXT = 'Error!';
 
-        // Find the video element within the reel container
-        const videoElement = reelContainer.querySelector('video[src*="cdninstagram"]');
-        if (!videoElement || !videoElement.src) {
-            return; // No video or no source found
-        }
+    // --- Selectors ---
+    // Using aria-label is more robust against Instagram's changing class names.
+    const SHARE_BUTTON_SELECTOR = 'svg[aria-label="Share"]';
+    // Scope selectors to the reel's dialog box to avoid conflicts.
+    const DIALOG_VIDEO_SELECTOR = 'div[role="dialog"] video';
+    const DIALOG_USERNAME_SELECTOR = 'div[role="dialog"] header a';
 
-        // Find the container where we want to place the button
-        // This is often the section that holds the Like, Comment, Share, Save buttons.
-        // Look for the "Share" button's parent as a reliable anchor point.
-        let actionButtonsContainer = null;
-        const shareButton = reelContainer.querySelector('div[role="button"][aria-label="Share"]'); // Common for share button
-        if (shareButton) {
-            // The share button is often in a div, and its parent is the row of action buttons.
-            actionButtonsContainer = shareButton.closest('div[style*="flex-direction: row;"][style*="align-items: center;"]');
-            if (!actionButtonsContainer) {
-                 // Fallback: If not found, try the parent of the parent of the share button, which often contains all action buttons.
-                 actionButtonsContainer = shareButton.parentElement;
-                 if (actionButtonsContainer && actionButtonsContainer.childElementCount > 2) { // Ensure it's a multi-button container
-                    actionButtonsContainer = actionButtonsContainer.parentElement;
-                 }
+    // --- Style Injection ---
+    // This adds the CSS for our button to the page.
+    GM_addStyle(`
+        #${BUTTON_ID} {
+            background-color: #0095f6; /* A familiar blue */
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 7px 16px;
+            margin-left: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            line-height: 1.3;
+            text-align: center;
+            transition: background-color 0.2s ease-in-out;
+        }
+        #${BUTTON_ID}:hover {
+            background-color: #0077c6; /* Darker blue on hover */
+        }
+        #${BUTTON_ID}:disabled {
+            background-color: #a2d2f7; /* Lighter blue when disabled */
+            cursor: not-allowed;
+        }
+    `);
+
+    /**
+     * Creates the download button element with its click event listener.
+     * @returns {HTMLButtonElement} The configured download button.
+     */
+    const createDownloadButton = () => {
+        const button = document.createElement('button');
+        button.id = BUTTON_ID;
+        button.textContent = BUTTON_TEXT;
+
+        button.addEventListener('click', (event) => {
+            // Prevent the click from bubbling up to other Instagram UI elements.
+            event.preventDefault();
+            event.stopPropagation();
+
+            const videoElement = document.querySelector(DIALOG_VIDEO_SELECTOR);
+            if (!videoElement || !videoElement.src) {
+                console.error('Reels Downloader: Video element or its source was not found.');
+                showButtonError(button, 'Video not found');
+                return;
             }
-        }
 
-        // If a specific action buttons container isn't found, try a more general approach
-        if (!actionButtonsContainer) {
-            // Look for a section with role="group" which often contains the action buttons in the main feed or profile
-            actionButtonsContainer = reelContainer.querySelector('section[role="group"]');
-        }
+            const videoUrl = videoElement.src;
 
-        if (!actionButtonsContainer) {
-            console.warn('Instagram Reels Downloader: Could not find suitable button container for the download button.');
+            // Update button state to provide user feedback.
+            button.disabled = true;
+            button.textContent = BUTTON_DOWNLOADING_TEXT;
+
+            try {
+                // Generate a descriptive filename.
+                const username = document.querySelector(DIALOG_USERNAME_SELECTOR)?.textContent || 'instagram_user';
+                const postId = window.location.pathname.split('/reels/')[1]?.replace(/\//g, '') || Date.now();
+                const filename = `reel_${username}_${postId}.mp4`;
+
+                console.log(`Reels Downloader: Attempting to download from ${videoUrl}`);
+
+                // Use Tampermonkey's download API for robust, cross-origin downloads.
+                GM_download({
+                    url: videoUrl,
+                    name: filename,
+                    onload: () => {
+                        console.log(`Reels Downloader: Download started for ${filename}.`);
+                        // Reset button after a short delay to show completion.
+                        setTimeout(() => {
+                           button.disabled = false;
+                           button.textContent = BUTTON_TEXT;
+                        }, 1000);
+                    },
+                    onerror: (err) => {
+                        console.error('Reels Downloader: GM_download failed.', err);
+                        showButtonError(button, `Download failed: ${err.error}`);
+                        // As a fallback, try opening the video in a new tab.
+                        window.open(videoUrl, '_blank');
+                    },
+                    ontimeout: () => {
+                        console.error('Reels Downloader: Download timed out.');
+                        showButtonError(button, 'Download timed out.');
+                    }
+                });
+            } catch (error) {
+                console.error('Reels Downloader: An error occurred during download initiation.', error);
+                showButtonError(button, 'An error occurred.');
+            }
+        });
+
+        return button;
+    };
+
+    /**
+     * Temporarily shows an error message on the button.
+     * @param {HTMLButtonElement} button - The button element.
+     * @param {string} message - The error message for the console.
+     */
+    function showButtonError(button, message) {
+        button.textContent = BUTTON_ERROR_TEXT;
+        console.error(`Reels Downloader: ${message}`);
+        setTimeout(() => {
+            button.disabled = false;
+            button.textContent = BUTTON_TEXT;
+        }, 2500); // Reset after 2.5 seconds.
+    }
+
+    /**
+     * Finds the correct location in the DOM and inserts the download button.
+     */
+    const placeButton = () => {
+        // If the button is already on the page, do nothing.
+        if (document.getElementById(BUTTON_ID)) {
             return;
         }
 
-        // Create the download button
-        const downloadButton = document.createElement('button');
-        downloadButton.textContent = 'Download';
-        downloadButton.classList.add('instagram-reel-download-button'); // Custom class for identification
+        // Find the "Share" button, which serves as an anchor for placement.
+        const shareButtonSvg = document.querySelector(SHARE_BUTTON_SELECTOR);
+        if (!shareButtonSvg) {
+            return; // Anchor not found, UI not ready yet.
+        }
 
-        // Apply some basic styling to match Instagram's look and feel
-        downloadButton.style.cssText = `
-            background-color: #0095f6; /* Instagram blue */
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 8px 12px;
-            margin-left: 10px; /* Space from other buttons */
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 14px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 5px; /* Space between icon and text */
-            min-width: unset; /* Override Instagram's min-width on some buttons */
-            height: 36px; /* Match height of other buttons */
-            transition: background-color 0.2s ease;
-        `;
-        downloadButton.onmouseover = () => downloadButton.style.backgroundColor = '#007acc';
-        downloadButton.onmouseout = () => downloadButton.style.backgroundColor = '#0095f6';
+        // Traverse up from the SVG to find the container of all action buttons.
+        // The container is typically a div with several child elements (for like, comment, share, etc.).
+        const actionBar = shareButtonSvg.closest('div[class*="x1i10hfl"]');
+        
+        if (actionBar && !actionBar.querySelector(`#${BUTTON_ID}`)) {
+            console.log('Reels Downloader: Action bar found. Placing button.');
+            const downloadButton = createDownloadButton();
+            // Append our button to the end of the action bar.
+            actionBar.appendChild(downloadButton);
+        }
+    };
 
-        // Add a download icon (Instagram's SVG format, slightly modified viewBox/size for fit)
-        const downloadIcon = document.createElement('span');
-        downloadIcon.innerHTML = `
-            <svg aria-label="Download" color="rgb(255, 255, 255)" fill="rgb(255, 255, 255)" height="18" role="img" viewBox="0 0 24 24" width="18">
-                <path d="M19.349 11.666a1.5 1.5 0 0 1-.444 1.06l-4.254 4.253a1.5 1.5 0 0 1-2.122 0l-4.253-4.253a1.5 1.5 0 0 1 2.122-2.121l2.402 2.402V3.415a1.5 1.5 0 0 1 3 0v10.426l2.402-2.402a1.5 1.5 0 0 1 1.06-.444Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
-                <path d="M21.5 17.5v3a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5v-3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
-            </svg>
-        `;
-        downloadButton.prepend(downloadIcon);
+    // --- Mutation Observer ---
+    // Instagram is a Single Page Application (SPA), so content loads dynamically.
+    // A MutationObserver is the most efficient way to detect when a Reel has been loaded into the DOM.
 
-        // Add click listener
-        downloadButton.addEventListener('click', () => {
-            const videoSrc = videoElement.src;
-            if (videoSrc) {
-                // Create a temporary anchor tag for downloading
-                const a = document.createElement('a');
-                a.href = videoSrc;
-                // Suggest a filename. Use a timestamp to ensure uniqueness.
-                a.download = `instagram-reel-${Date.now()}.mp4`;
-                document.body.appendChild(a); // Required for Firefox to trigger download
-                a.click();
-                document.body.removeChild(a); // Clean up the temporary element
-            } else {
-                alert('Instagram Reels Downloader: Could not find video source to download!');
-            }
-        });
-
-        // Append the button to the found action container
-        actionButtonsContainer.appendChild(downloadButton);
-        console.log('Instagram Reels Downloader: Download button added to Reel.');
-    }
-
-    // Function to find the main container for a Reel post
-    function findReelContainer(element) {
-        // Prioritize modal dialogs (when a Reel is opened in a pop-up)
-        let container = element.closest('div[role="dialog"]');
-        if (container) return container;
-
-        // Then look for article elements (common for posts in feed, profile, or explore)
-        container = element.closest('article');
-        if (container) return container;
-
-        // Fallback: More generic container. Instagram's structure varies a lot.
-        // Look for a parent div that seems to encompass the entire post content (video + actions).
-        container = element.closest('div[style*="flex-direction: column;"]');
-        if (container) return container;
-
-        return null;
-    }
-
-    // Use a MutationObserver to detect when new elements (Reels) are added to the DOM
-    const observer = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-            if (mutation.addedNodes.length > 0) {
-                mutation.addedNodes.forEach((node) => {
-                    // Only process element nodes
-                    if (node.nodeType === 1) {
-                        let videoElement = null;
-                        // Check if the added node itself is a video tag with an Instagram source
-                        if (node.tagName === 'VIDEO' && node.src && node.src.includes('cdninstagram')) {
-                            videoElement = node;
-                        } else {
-                            // Or if the added node contains a video tag with an Instagram source
-                            videoElement = node.querySelector('video[src*="cdninstagram"]');
-                        }
-
-                        if (videoElement) {
-                            const reelContainer = findReelContainer(videoElement);
-                            if (reelContainer) {
-                                addDownloadButton(reelContainer);
-                            }
-                        }
-                    }
-                });
-            }
-        });
+    let debounceTimer;
+    const observer = new MutationObserver(() => {
+        // Debounce the placement function to avoid running it excessively on rapid DOM changes.
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(placeButton, 500);
     });
 
-    // Start observing the entire document body for changes
-    // subtree: true means it will observe changes in all descendants of the body
-    // childList: true means it will observe additions/removals of direct children
-    observer.observe(document.body, { childList: true, subtree: true });
-
-    // Also, run once on page load for any Reels that are already present in the DOM
-    document.querySelectorAll('video[src*="cdninstagram"]').forEach(videoElement => {
-        const reelContainer = findReelContainer(videoElement);
-        if (reelContainer) {
-            addDownloadButton(reelContainer);
-        }
+    // Start observing the entire document body for additions and removals of nodes.
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
     });
 
 })();
